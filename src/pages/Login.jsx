@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
-import { useTheme } from "../contexts/ThemeContext"; // Importando o tema
-import { useNavigate } from "react-router-dom";
+import { useTheme } from "../contexts/ThemeContext";
+import { useNavigate, Link } from "react-router-dom"; // Importe Link
 import { Car, Sun, Moon } from "phosphor-react";
 import { doc, getDoc } from "firebase/firestore";
 import { db } from "../firebase";
@@ -13,7 +13,7 @@ export function Login() {
   const [loading, setLoading] = useState(false);
 
   const { signIn } = useAuth();
-  const { theme, toggleTheme } = useTheme(); // Hook do tema
+  const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
   async function handleSubmit(e) {
@@ -42,7 +42,6 @@ export function Login() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900 px-4 transition-colors duration-300 relative">
-      {/* Botão de Tema (Canto Superior Direito) */}
       <button
         onClick={toggleTheme}
         className="absolute top-4 right-4 p-2 rounded-full bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300 shadow-md hover:scale-110 transition-all"
@@ -96,13 +95,23 @@ export function Login() {
             />
           </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors"
-          >
-            {loading ? "Verificando..." : "Acessar Painel"}
-          </button>
+          <div className="space-y-3">
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-green-600 hover:bg-green-700 disabled:opacity-50 transition-colors"
+            >
+              {loading ? "Verificando..." : "Acessar Painel"}
+            </button>
+
+            {/* NOVO BOTÃO DE CADASTRO */}
+            <Link
+              to="/register"
+              className="w-full flex justify-center py-2 px-4 border border-green-600 dark:border-green-500 rounded-md text-sm font-medium text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
+            >
+              Realize seu Cadastro
+            </Link>
+          </div>
         </form>
       </div>
     </div>

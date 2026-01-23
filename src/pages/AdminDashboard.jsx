@@ -2,9 +2,9 @@ import { useState, useEffect } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useNavigate } from "react-router-dom";
-import { db, auth } from "../firebase"; // Importa auth para o reset de senha
-import { collection, getDocs, orderBy, query } from "firebase/firestore";
-import { sendPasswordResetEmail } from "firebase/auth"; // Função de reset
+import { db, auth } from "../firebase";
+import { collection, orderBy, query, onSnapshot } from "firebase/firestore";
+import { sendPasswordResetEmail } from "firebase/auth";
 import {
   UserPlus,
   SignOut,
@@ -16,7 +16,6 @@ import {
   ChartLineUp,
   Users,
   Key,
-  Circle,
 } from "phosphor-react";
 import ReactApexChart from "react-apexcharts";
 
@@ -30,17 +29,73 @@ export function AdminDashboard() {
   const [password, setPassword] = useState("");
   const [message, setMessage] = useState(null);
   const [loading, setLoading] = useState(false);
-
-  // Estado para lista de usuários
   const [usersList, setUsersList] = useState([]);
 
-  // --- CONFIG DO GRÁFICO ADMIN ---
+  // Estados do Gráfico Dinâmico
+  const [chartData, setChartData] = useState({
+    categories: [],
+    series: [{ name: "Novos Motoristas", data: [] }],
+  });
+
+  // --- FUNÇÃO PARA PROCESSAR DADOS DO GRÁFICO ---
+  function processChartData(users) {
+    const months = [
+      "Jan",
+      "Fev",
+      "Mar",
+      "Abr",
+      "Mai",
+      "Jun",
+      "Jul",
+      "Ago",
+      "Set",
+      "Out",
+      "Nov",
+      "Dez",
+    ];
+    const today = new Date();
+    const last6Months = [];
+    const counts = [0, 0, 0, 0, 0, 0]; // Contadores para os 6 meses
+
+    // 1. Define os últimos 6 meses (labels)
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+      last6Months.push({
+        label: months[d.getMonth()],
+        monthIndex: d.getMonth(),
+        year: d.getFullYear(),
+      });
+    }
+
+    // 2. Conta os usuários
+    users.forEach((user) => {
+      if (!user.createdAt) return;
+      // Converte Timestamp do Firebase para Date JS
+      const date = user.createdAt.toDate
+        ? user.createdAt.toDate()
+        : new Date(user.createdAt);
+
+      // Verifica se o usuário entra em algum dos 6 meses
+      last6Months.forEach((m, index) => {
+        if (date.getMonth() === m.monthIndex && date.getFullYear() === m.year) {
+          counts[index]++;
+        }
+      });
+    });
+
+    setChartData({
+      categories: last6Months.map((m) => m.label),
+      series: [{ name: "Novos Motoristas", data: counts }],
+    });
+  }
+
+  // --- CONFIG DO GRÁFICO ---
   const chartOptions = {
     chart: { type: "bar", toolbar: { show: false }, background: "transparent" },
     colors: ["#059669"],
     plotOptions: { bar: { borderRadius: 4, columnWidth: "50%" } },
     xaxis: {
-      categories: ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun"],
+      categories: chartData.categories, // <--- Dinâmico
       labels: { style: { colors: "#9CA3AF" } },
       axisBorder: { show: false },
       axisTicks: { show: false },
@@ -50,27 +105,28 @@ export function AdminDashboard() {
     theme: { mode: "dark" },
     tooltip: { theme: "dark" },
   };
-  const chartSeries = [
-    { name: "Novos Motoristas", data: [5, 8, 12, 15, 22, 30] },
-  ];
 
-  // Carrega lista de usuários ao iniciar
+  // --- CARREGA USUÁRIOS EM TEMPO REAL ---
   useEffect(() => {
-    async function fetchUsers() {
-      try {
-        const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
-        const snapshot = await getDocs(q);
+    const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
+
+    const unsubscribe = onSnapshot(
+      q,
+      (snapshot) => {
         const users = snapshot.docs.map((doc) => ({
           id: doc.id,
           ...doc.data(),
         }));
         setUsersList(users);
-      } catch (error) {
+        processChartData(users); // <--- Atualiza o gráfico quando os dados chegam
+      },
+      (error) => {
         console.error("Erro ao buscar usuários:", error);
-      }
-    }
-    fetchUsers();
-  }, []); // Roda apenas uma vez ao montar o componente
+      },
+    );
+
+    return () => unsubscribe();
+  }, []);
 
   async function handleLogout() {
     await logout();
@@ -90,11 +146,6 @@ export function AdminDashboard() {
       setName("");
       setEmail("");
       setPassword("");
-      // Atualiza a lista na hora
-      setUsersList((prev) => [
-        { name, email, role: "user", createdAt: new Date(), isWorking: false },
-        ...prev,
-      ]);
       setTimeout(() => setMessage(null), 5000);
     } else {
       setMessage({ type: "error", text: result.error });
@@ -102,7 +153,6 @@ export function AdminDashboard() {
     setLoading(false);
   }
 
-  // Função para enviar email de reset de senha
   async function handleResetPassword(userEmail) {
     if (
       !confirm(
@@ -110,7 +160,6 @@ export function AdminDashboard() {
       )
     )
       return;
-
     try {
       await sendPasswordResetEmail(auth, userEmail);
       alert(`Email enviado para ${userEmail}!`);
@@ -157,7 +206,6 @@ export function AdminDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* COLUNA DA ESQUERDA (Cadastro + Lista de Usuários) */}
         <div className="lg:col-span-2 space-y-8">
           <div>
             <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
@@ -168,7 +216,6 @@ export function AdminDashboard() {
             </p>
           </div>
 
-          {/* Cadastro */}
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
             <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4 flex justify-between items-center">
               <div className="flex items-center gap-2 text-white">
@@ -255,7 +302,6 @@ export function AdminDashboard() {
             </div>
           </div>
 
-          {/* LISTA DE MOTORISTAS */}
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden">
             <div className="p-6 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
               <Users size={24} className="text-gray-700 dark:text-gray-200" />
@@ -288,14 +334,12 @@ export function AdminDashboard() {
                         </p>
                       </div>
                     </div>
-
                     <div className="flex items-center gap-4">
                       <div
                         className={`px-3 py-1 rounded-full text-xs font-bold ${user.isWorking ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"}`}
                       >
                         {user.isWorking ? "EM CORRIDA" : "OFFLINE"}
                       </div>
-
                       {user.role !== "super_admin" && (
                         <button
                           onClick={() => handleResetPassword(user.email)}
@@ -313,7 +357,6 @@ export function AdminDashboard() {
           </div>
         </div>
 
-        {/* COLUNA DA DIREITA (Gráfico e Métricas) */}
         <div className="space-y-6">
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 p-6">
             <div className="flex items-center gap-2 mb-4 text-gray-700 dark:text-gray-200">
@@ -323,7 +366,7 @@ export function AdminDashboard() {
             <div className="h-64">
               <ReactApexChart
                 options={chartOptions}
-                series={chartSeries}
+                series={chartData.series}
                 type="bar"
                 height="100%"
               />

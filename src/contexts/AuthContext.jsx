@@ -13,47 +13,64 @@ const AuthContext = createContext({});
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
-  const [userData, setUserData] = useState(null); // Guarda se é admin ou user
+  const [userData, setUserData] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // Login
   function signIn(email, password) {
     return signInWithEmailAndPassword(auth, email, password);
   }
 
-  // Logout
   function logout() {
     setUser(null);
     setUserData(null);
     return signOut(auth);
   }
 
-  // Função Especial do Admin: Criar Motorista
+  // --- NOVA FUNÇÃO: Auto-Cadastro (Driver) ---
+  async function registerUser(email, password, name) {
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      email,
+      password,
+    );
+    const newUser = userCredential.user;
+
+    // Cria o perfil no Firestore
+    await setDoc(doc(db, "users", newUser.uid), {
+      uid: newUser.uid,
+      name: name,
+      email: email,
+      role: "user",
+      subscriptionStatus: "active", // Ou 'trial'
+      isWorking: false,
+      createdAt: new Date(),
+    });
+
+    return newUser;
+  }
+
+  // Função do Admin (mantida igual)
   async function createDriverAccount(email, password, name) {
     let secondaryApp = null;
     try {
-      // Usa uma instância secundária para não deslogar você (Admin)
       secondaryApp = getSecondaryApp();
       const secondaryAuth = getAuth(secondaryApp);
-
       const userCredential = await createUserWithEmailAndPassword(
         secondaryAuth,
         email,
         password,
       );
       const newUser = userCredential.user;
-
-      // Cria o perfil no Firestore
       await setDoc(doc(db, "users", newUser.uid), {
         uid: newUser.uid,
         name: name,
         email: email,
-        role: "user", // Motorista comum
+        role: "user",
         subscriptionStatus: "active",
+        isWorking: false,
         createdAt: new Date(),
       });
-
-      await signOut(secondaryAuth); // Limpa a sessão secundária
+      await signOut(secondaryAuth);
       return { success: true };
     } catch (error) {
       console.error("Erro ao criar motorista:", error);
@@ -61,13 +78,10 @@ export function AuthProvider({ children }) {
     }
   }
 
-  // Monitora se o usuário está logado
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-
       if (currentUser) {
-        // Busca os dados extras (role) no Firestore
         const docRef = doc(db, "users", currentUser.uid);
         const docSnap = await getDoc(docRef);
         if (docSnap.exists()) {
@@ -76,10 +90,8 @@ export function AuthProvider({ children }) {
       } else {
         setUserData(null);
       }
-
       setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
@@ -91,6 +103,7 @@ export function AuthProvider({ children }) {
         signIn,
         logout,
         createDriverAccount,
+        registerUser,
         loading,
       }}
     >
