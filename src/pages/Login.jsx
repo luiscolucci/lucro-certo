@@ -2,10 +2,10 @@ import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useNavigate, Link } from "react-router-dom";
-import { Car, Sun, Moon } from "phosphor-react";
+import { Car, Sun, Moon, LockKey, X, PaperPlaneRight } from "phosphor-react"; // Ícones novos
 import { doc, getDoc } from "firebase/firestore";
-import { db, auth } from "../firebase"; // Importe auth
-import { signOut } from "firebase/auth"; // Importe signOut
+import { sendPasswordResetEmail, signOut } from "firebase/auth"; // Importamos a função de reset
+import { db, auth } from "../firebase";
 
 export function Login() {
   const [email, setEmail] = useState("");
@@ -13,10 +13,17 @@ export function Login() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  // Estados do "Esqueci a Senha"
+  const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotMsg, setForgotMsg] = useState(null); // { type: 'success' | 'error', text: '' }
+  const [sendingLink, setSendingLink] = useState(false);
+
   const { signIn } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
+  // --- Lógica de Login (Mantida) ---
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -29,7 +36,6 @@ export function Login() {
       const docRef = doc(db, "users", user.uid);
       const docSnap = await getDoc(docRef);
 
-      // VERIFICA SE O USUÁRIO EXISTE E SE ESTÁ ATIVO
       if (!docSnap.exists()) {
         await signOut(auth);
         throw new Error("Usuário não encontrado. Contate o suporte.");
@@ -38,7 +44,7 @@ export function Login() {
       const userData = docSnap.data();
 
       if (userData.isBlocked) {
-        await signOut(auth); // Desloga imediatamente
+        await signOut(auth);
         throw new Error("Esta conta foi bloqueada pelo administrador.");
       }
 
@@ -48,12 +54,12 @@ export function Login() {
         navigate("/app");
       }
     } catch (err) {
-      // Mensagens de erro amigáveis
       if (err.message.includes("bloqueada")) {
         setError(err.message);
       } else if (
         err.code === "auth/user-not-found" ||
-        err.code === "auth/wrong-password"
+        err.code === "auth/wrong-password" ||
+        err.code === "auth/invalid-credential"
       ) {
         setError("Email ou senha incorretos.");
       } else {
@@ -61,6 +67,41 @@ export function Login() {
       }
     } finally {
       setLoading(false);
+    }
+  }
+
+  // --- Lógica de Reset de Senha (Nova) ---
+  async function handleForgotPassword(e) {
+    e.preventDefault();
+    if (!forgotEmail) return;
+
+    setSendingLink(true);
+    setForgotMsg(null);
+
+    try {
+      await sendPasswordResetEmail(auth, forgotEmail);
+      setForgotMsg({
+        type: "success",
+        text: "Email enviado! Verifique sua caixa de entrada (e spam) para redefinir a senha.",
+      });
+      setForgotEmail(""); // Limpa o campo
+    } catch (error) {
+      console.error(error);
+      if (error.code === "auth/user-not-found") {
+        setForgotMsg({
+          type: "error",
+          text: "Este e-mail não está cadastrado.",
+        });
+      } else if (error.code === "auth/invalid-email") {
+        setForgotMsg({ type: "error", text: "Formato de e-mail inválido." });
+      } else {
+        setForgotMsg({
+          type: "error",
+          text: "Erro ao enviar. Tente novamente.",
+        });
+      }
+    } finally {
+      setSendingLink(false);
     }
   }
 
@@ -105,10 +146,22 @@ export function Login() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
+
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
-              Senha
-            </label>
+            <div className="flex justify-between items-center mb-1">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
+                Senha
+              </label>
+
+              {/* LINK "ESQUECI MINHA SENHA" */}
+              <button
+                type="button"
+                onClick={() => setIsForgotModalOpen(true)}
+                className="text-xs font-medium text-green-600 hover:text-green-500 dark:text-green-400 hover:underline"
+              >
+                Esqueci minha senha
+              </button>
+            </div>
             <input
               type="password"
               required
@@ -117,6 +170,7 @@ export function Login() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
+
           <div className="space-y-3">
             <button
               type="submit"
@@ -125,6 +179,7 @@ export function Login() {
             >
               {loading ? "Verificando..." : "Acessar Painel"}
             </button>
+
             <Link
               to="/register"
               className="w-full flex justify-center py-2 px-4 border border-green-600 dark:border-green-500 rounded-md text-sm font-medium text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"
@@ -134,6 +189,76 @@ export function Login() {
           </div>
         </form>
       </div>
+
+      {/* --- MODAL ESQUECI A SENHA --- */}
+      {isForgotModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+          <div className="bg-white dark:bg-gray-800 w-full max-w-sm rounded-2xl shadow-2xl p-6 relative animate-slide-up">
+            {/* Botão Fechar */}
+            <button
+              onClick={() => setIsForgotModalOpen(false)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
+            >
+              <X size={24} />
+            </button>
+
+            <div className="text-center mb-6">
+              <div className="w-14 h-14 bg-blue-100 dark:bg-blue-900/30 rounded-full flex items-center justify-center mx-auto mb-3">
+                <LockKey
+                  size={28}
+                  className="text-blue-600 dark:text-blue-400"
+                  weight="fill"
+                />
+              </div>
+              <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                Redefinir Senha
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
+                Informe seu e-mail cadastrado. Enviaremos um link para você
+                criar uma nova senha.
+              </p>
+            </div>
+
+            {forgotMsg && (
+              <div
+                className={`mb-4 p-3 rounded text-sm text-center ${forgotMsg.type === "success" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
+              >
+                {forgotMsg.text}
+              </div>
+            )}
+
+            <form onSubmit={handleForgotPassword}>
+              <div className="mb-5">
+                <label className="block text-xs font-bold uppercase text-gray-500 dark:text-gray-400 mb-1 ml-1">
+                  Seu E-mail
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="exemplo@email.com"
+                  className="w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none transition-all"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={sendingLink}
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-600/30 flex items-center justify-center gap-2 transition-all active:scale-95"
+              >
+                {sendingLink ? (
+                  "Enviando..."
+                ) : (
+                  <>
+                    <PaperPlaneRight size={20} weight="bold" /> Enviar Link
+                  </>
+                )}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
