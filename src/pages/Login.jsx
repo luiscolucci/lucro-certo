@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
-import { useNavigate, Link } from "react-router-dom"; // Importe Link
+import { useNavigate, Link } from "react-router-dom";
 import { Car, Sun, Moon } from "phosphor-react";
 import { doc, getDoc } from "firebase/firestore";
-import { db } from "../firebase";
+import { db, auth } from "../firebase"; // Importe auth
+import { signOut } from "firebase/auth"; // Importe signOut
 
 export function Login() {
   const [email, setEmail] = useState("");
@@ -24,9 +25,22 @@ export function Login() {
     try {
       const userCredential = await signIn(email, password);
       const user = userCredential.user;
+
       const docRef = doc(db, "users", user.uid);
       const docSnap = await getDoc(docRef);
+
+      // VERIFICA SE O USUÁRIO EXISTE E SE ESTÁ ATIVO
+      if (!docSnap.exists()) {
+        await signOut(auth);
+        throw new Error("Usuário não encontrado. Contate o suporte.");
+      }
+
       const userData = docSnap.data();
+
+      if (userData.isBlocked) {
+        await signOut(auth); // Desloga imediatamente
+        throw new Error("Esta conta foi bloqueada pelo administrador.");
+      }
 
       if (userData?.role === "super_admin") {
         navigate("/admin");
@@ -34,7 +48,17 @@ export function Login() {
         navigate("/app");
       }
     } catch (err) {
-      setError("Falha ao entrar. Verifique email e senha.");
+      // Mensagens de erro amigáveis
+      if (err.message.includes("bloqueada")) {
+        setError(err.message);
+      } else if (
+        err.code === "auth/user-not-found" ||
+        err.code === "auth/wrong-password"
+      ) {
+        setError("Email ou senha incorretos.");
+      } else {
+        setError("Falha ao entrar: " + err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -81,7 +105,6 @@ export function Login() {
               onChange={(e) => setEmail(e.target.value)}
             />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">
               Senha
@@ -94,7 +117,6 @@ export function Login() {
               onChange={(e) => setPassword(e.target.value)}
             />
           </div>
-
           <div className="space-y-3">
             <button
               type="submit"
@@ -103,8 +125,6 @@ export function Login() {
             >
               {loading ? "Verificando..." : "Acessar Painel"}
             </button>
-
-            {/* NOVO BOTÃO DE CADASTRO */}
             <Link
               to="/register"
               className="w-full flex justify-center py-2 px-4 border border-green-600 dark:border-green-500 rounded-md text-sm font-medium text-green-600 dark:text-green-500 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors"

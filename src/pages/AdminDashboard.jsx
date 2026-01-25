@@ -3,8 +3,16 @@ import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useNavigate } from "react-router-dom";
 import { db, auth } from "../firebase";
-import { collection, orderBy, query, onSnapshot } from "firebase/firestore";
-import { sendPasswordResetEmail } from "firebase/auth";
+import {
+  collection,
+  orderBy,
+  query,
+  onSnapshot,
+  doc,
+  updateDoc,
+  deleteDoc,
+} from "firebase/firestore";
+import { sendPasswordResetEmail, updatePassword } from "firebase/auth";
 import {
   UserPlus,
   SignOut,
@@ -16,14 +24,19 @@ import {
   ChartLineUp,
   Users,
   Key,
+  Lock,
+  LockOpen,
+  Trash,
+  X,
 } from "phosphor-react";
 import ReactApexChart from "react-apexcharts";
 
 export function AdminDashboard() {
-  const { userData, logout, createDriverAccount } = useAuth();
+  const { logout, createDriverAccount, user: currentUser } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
+  // Estados Cadastro
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -31,13 +44,17 @@ export function AdminDashboard() {
   const [loading, setLoading] = useState(false);
   const [usersList, setUsersList] = useState([]);
 
-  // Estados do Gráfico Dinâmico
+  // Estados Admin
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
+  const [newAdminPassword, setNewAdminPassword] = useState("");
+  const [adminMsg, setAdminMsg] = useState("");
+
+  // Estados Gráfico
   const [chartData, setChartData] = useState({
     categories: [],
     series: [{ name: "Novos Motoristas", data: [] }],
   });
 
-  // --- FUNÇÃO PARA PROCESSAR DADOS DO GRÁFICO ---
   function processChartData(users) {
     const months = [
       "Jan",
@@ -55,9 +72,8 @@ export function AdminDashboard() {
     ];
     const today = new Date();
     const last6Months = [];
-    const counts = [0, 0, 0, 0, 0, 0]; // Contadores para os 6 meses
+    const counts = [0, 0, 0, 0, 0, 0];
 
-    // 1. Define os últimos 6 meses (labels)
     for (let i = 5; i >= 0; i--) {
       const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
       last6Months.push({
@@ -67,19 +83,14 @@ export function AdminDashboard() {
       });
     }
 
-    // 2. Conta os usuários
-    users.forEach((user) => {
-      if (!user.createdAt) return;
-      // Converte Timestamp do Firebase para Date JS
-      const date = user.createdAt.toDate
-        ? user.createdAt.toDate()
-        : new Date(user.createdAt);
-
-      // Verifica se o usuário entra em algum dos 6 meses
+    users.forEach((u) => {
+      if (!u.createdAt) return;
+      const date = u.createdAt.toDate
+        ? u.createdAt.toDate()
+        : new Date(u.createdAt);
       last6Months.forEach((m, index) => {
-        if (date.getMonth() === m.monthIndex && date.getFullYear() === m.year) {
+        if (date.getMonth() === m.monthIndex && date.getFullYear() === m.year)
           counts[index]++;
-        }
       });
     });
 
@@ -89,13 +100,12 @@ export function AdminDashboard() {
     });
   }
 
-  // --- CONFIG DO GRÁFICO ---
   const chartOptions = {
     chart: { type: "bar", toolbar: { show: false }, background: "transparent" },
     colors: ["#059669"],
     plotOptions: { bar: { borderRadius: 4, columnWidth: "50%" } },
     xaxis: {
-      categories: chartData.categories, // <--- Dinâmico
+      categories: chartData.categories,
       labels: { style: { colors: "#9CA3AF" } },
       axisBorder: { show: false },
       axisTicks: { show: false },
@@ -106,31 +116,38 @@ export function AdminDashboard() {
     tooltip: { theme: "dark" },
   };
 
-  // --- CARREGA USUÁRIOS EM TEMPO REAL ---
   useEffect(() => {
     const q = query(collection(db, "users"), orderBy("createdAt", "desc"));
-
-    const unsubscribe = onSnapshot(
-      q,
-      (snapshot) => {
-        const users = snapshot.docs.map((doc) => ({
-          id: doc.id,
-          ...doc.data(),
-        }));
-        setUsersList(users);
-        processChartData(users); // <--- Atualiza o gráfico quando os dados chegam
-      },
-      (error) => {
-        console.error("Erro ao buscar usuários:", error);
-      },
-    );
-
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const users = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+      setUsersList(users);
+      processChartData(users);
+    });
     return () => unsubscribe();
   }, []);
 
   async function handleLogout() {
     await logout();
     navigate("/login");
+  }
+
+  async function handleChangeMyPassword(e) {
+    e.preventDefault();
+    if (newAdminPassword.length < 6) {
+      setAdminMsg("A senha deve ter no mínimo 6 caracteres.");
+      return;
+    }
+    try {
+      await updatePassword(currentUser, newAdminPassword);
+      setAdminMsg("Sucesso! Senha alterada.");
+      setTimeout(() => {
+        setAdminMsg("");
+        setNewAdminPassword("");
+        setIsPasswordModalOpen(false);
+      }, 2000);
+    } catch (error) {
+      setAdminMsg("Erro: Faça logout e login novamente para trocar a senha.");
+    }
   }
 
   async function handleRegister(e) {
@@ -164,8 +181,36 @@ export function AdminDashboard() {
       await sendPasswordResetEmail(auth, userEmail);
       alert(`Email enviado para ${userEmail}!`);
     } catch (error) {
-      console.error(error);
-      alert("Erro ao enviar email: " + error.message);
+      alert("Erro: " + error.message);
+    }
+  }
+
+  async function handleToggleBlock(user) {
+    const action = user.isBlocked ? "desbloquear" : "bloquear";
+    if (!confirm(`Tem certeza que deseja ${action} o acesso de ${user.name}?`))
+      return;
+
+    try {
+      const userRef = doc(db, "users", user.id);
+      await updateDoc(userRef, { isBlocked: !user.isBlocked });
+    } catch (error) {
+      alert("Erro ao alterar status: " + error.message);
+    }
+  }
+
+  async function handleDeleteUser(user) {
+    if (
+      !confirm(
+        `ATENÇÃO: Isso excluirá permanentemente o motorista ${user.name} e ele perderá o acesso. Confirmar exclusão?`,
+      )
+    )
+      return;
+
+    try {
+      await deleteDoc(doc(db, "users", user.id));
+      alert("Usuário excluído do banco de dados.");
+    } catch (error) {
+      alert("Erro ao excluir: " + error.message);
     }
   }
 
@@ -194,9 +239,17 @@ export function AdminDashboard() {
               {theme === "dark" ? <Sun size={24} /> : <Moon size={24} />}
             </button>
             <div className="h-6 w-px bg-gray-300 dark:bg-gray-600 mx-2 hidden sm:block"></div>
+
+            <button
+              onClick={() => setIsPasswordModalOpen(true)}
+              className="flex items-center gap-2 text-gray-600 hover:text-green-600 dark:text-gray-300 dark:hover:text-green-400 font-medium text-sm transition-colors"
+              title="Alterar minha senha"
+            >
+              <Lock size={20} /> <span className="hidden sm:inline">Senha</span>
+            </button>
             <button
               onClick={handleLogout}
-              className="flex items-center gap-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium text-sm"
+              className="flex items-center gap-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 font-medium text-sm ml-2"
             >
               <SignOut size={20} />{" "}
               <span className="hidden sm:inline">Sair</span>
@@ -207,20 +260,13 @@ export function AdminDashboard() {
 
       <main className="max-w-7xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-3 gap-8">
         <div className="lg:col-span-2 space-y-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">
-              Painel Administrativo
-            </h1>
-            <p className="text-gray-500 dark:text-gray-400 mt-1">
-              Gerencie seus motoristas e assinaturas.
-            </p>
-          </div>
-
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden transition-colors">
             <div className="bg-gradient-to-r from-green-600 to-emerald-600 px-6 py-4 flex justify-between items-center">
               <div className="flex items-center gap-2 text-white">
                 <UserPlus size={24} />
-                <h2 className="text-lg font-semibold">Novo Motorista</h2>
+                <h2 className="text-lg font-semibold">
+                  Novo Motorista (Cadastro Manual)
+                </h2>
               </div>
             </div>
             <div className="p-6">
@@ -319,35 +365,71 @@ export function AdminDashboard() {
                 usersList.map((user) => (
                   <div
                     key={user.id}
-                    className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:bg-gray-50 dark:hover:bg-gray-700/30 transition-colors"
+                    className={`p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4 transition-colors ${user.isBlocked ? "bg-red-50 dark:bg-red-900/10" : "hover:bg-gray-50 dark:hover:bg-gray-700/30"}`}
                   >
                     <div className="flex items-center gap-3">
                       <div
-                        className={`w-3 h-3 rounded-full ${user.isWorking ? "bg-green-500 animate-pulse" : "bg-gray-300 dark:bg-gray-600"}`}
+                        className={`w-3 h-3 rounded-full ${user.isBlocked ? "bg-red-500" : user.isWorking ? "bg-green-500 animate-pulse" : "bg-gray-300 dark:bg-gray-600"}`}
                       ></div>
                       <div>
-                        <p className="font-bold text-gray-900 dark:text-white">
-                          {user.name || "Sem Nome"}
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <p
+                            className={`font-bold ${user.isBlocked ? "text-red-600 dark:text-red-400 line-through" : "text-gray-900 dark:text-white"}`}
+                          >
+                            {user.name || "Sem Nome"}
+                          </p>
+                          {user.isBlocked && (
+                            <span className="text-[10px] bg-red-100 text-red-800 px-1.5 py-0.5 rounded font-bold uppercase">
+                              Bloqueado
+                            </span>
+                          )}
+                        </div>
                         <p className="text-sm text-gray-500 dark:text-gray-400">
                           {user.email}
                         </p>
                       </div>
                     </div>
-                    <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
                       <div
-                        className={`px-3 py-1 rounded-full text-xs font-bold ${user.isWorking ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"}`}
+                        className={`mr-2 px-3 py-1 rounded-full text-xs font-bold ${user.isWorking ? "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" : "bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400"}`}
                       >
                         {user.isWorking ? "EM CORRIDA" : "OFFLINE"}
                       </div>
+
                       {user.role !== "super_admin" && (
-                        <button
-                          onClick={() => handleResetPassword(user.email)}
-                          className="p-2 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400"
-                          title="Enviar email de reset de senha"
-                        >
-                          <Key size={20} />
-                        </button>
+                        <>
+                          <button
+                            onClick={() => handleResetPassword(user.email)}
+                            className="p-2 text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-400 bg-gray-100 dark:bg-gray-700 rounded-lg transition-colors"
+                            title="Enviar email de reset de senha"
+                          >
+                            <Key size={18} />
+                          </button>
+
+                          <button
+                            onClick={() => handleToggleBlock(user)}
+                            className={`p-2 rounded-lg transition-colors ${user.isBlocked ? "text-green-600 hover:text-green-800 bg-green-100 dark:bg-green-900/30" : "text-orange-500 hover:text-orange-700 bg-orange-50 dark:bg-orange-900/20"}`}
+                            title={
+                              user.isBlocked
+                                ? "Desbloquear Acesso"
+                                : "Bloquear Acesso"
+                            }
+                          >
+                            {user.isBlocked ? (
+                              <LockOpen size={18} />
+                            ) : (
+                              <Lock size={18} />
+                            )}
+                          </button>
+
+                          <button
+                            onClick={() => handleDeleteUser(user)}
+                            className="p-2 text-red-600 hover:text-red-800 bg-red-50 dark:bg-red-900/20 rounded-lg transition-colors"
+                            title="Excluir Conta Permanentemente"
+                          >
+                            <Trash size={18} />
+                          </button>
+                        </>
                       )}
                     </div>
                   </div>
@@ -376,6 +458,49 @@ export function AdminDashboard() {
             </p>
           </div>
         </div>
+
+        {isPasswordModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+            <div className="bg-white dark:bg-gray-800 w-full max-w-sm rounded-2xl shadow-2xl p-6 animate-fade-in">
+              <div className="flex justify-between items-center mb-6">
+                <h3 className="text-lg font-bold text-gray-900 dark:text-white">
+                  Alterar Minha Senha
+                </h3>
+                <button onClick={() => setIsPasswordModalOpen(false)}>
+                  <X size={24} className="text-gray-500" />
+                </button>
+              </div>
+              {adminMsg && (
+                <div
+                  className={`p-3 rounded mb-4 text-sm ${adminMsg.includes("Sucesso") ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}
+                >
+                  {adminMsg}
+                </div>
+              )}
+              <form onSubmit={handleChangeMyPassword}>
+                <div className="mb-4">
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Nova Senha
+                  </label>
+                  <input
+                    type="password"
+                    required
+                    className="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white outline-none focus:ring-2 focus:ring-green-500"
+                    placeholder="Mínimo 6 caracteres"
+                    value={newAdminPassword}
+                    onChange={(e) => setNewAdminPassword(e.target.value)}
+                  />
+                </div>
+                <button
+                  type="submit"
+                  className="w-full py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-bold"
+                >
+                  Salvar Nova Senha
+                </button>
+              </form>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );
