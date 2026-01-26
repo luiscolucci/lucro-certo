@@ -30,9 +30,15 @@ import {
   Pencil,
   Trash,
   ListDashes,
+  FileText,
+  DownloadSimple,
+  MagnifyingGlass,
+  FilePdf,
 } from "phosphor-react";
 import ReactApexChart from "react-apexcharts";
 import { useNavigate } from "react-router-dom";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 export function DriverDashboard() {
   const { user, userData, logout } = useAuth();
@@ -51,21 +57,43 @@ export function DriverDashboard() {
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [isEndShiftModalOpen, setIsEndShiftModalOpen] = useState(false);
 
-  // Dados da Transação (Edição/Criação)
+  // --- ESTADO DO MODAL DE RELATÓRIO ---
+  const [isReportModalOpen, setIsReportModalOpen] = useState(false);
+  const [reportStartDate, setReportStartDate] = useState("");
+  const [reportEndDate, setReportEndDate] = useState("");
+  const [reportData, setReportData] = useState([]);
+  const [reportTotals, setReportTotals] = useState({
+    earnings: 0,
+    expenses: 0,
+    profit: 0,
+    km: 0,
+  });
+  const [loadingReport, setLoadingReport] = useState(false);
+
+  // Dados da Transação
   const [transactionType, setTransactionType] = useState("income");
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-
-  // NOVO: Estado para Edição
-  const [editingTransaction, setEditingTransaction] = useState(null); // Guarda o objeto sendo editado
+  const [editingTransaction, setEditingTransaction] = useState(null);
 
   // Listas de Dados
   const [chartFilter, setChartFilter] = useState("Semana");
   const [chartData, setChartData] = useState([]);
   const [chartCategories, setChartCategories] = useState([]);
   const [shiftHistory, setShiftHistory] = useState([]);
-  const [todayTransactions, setTodayTransactions] = useState([]); // NOVO: Lista de transações de hoje
+  const [todayTransactions, setTodayTransactions] = useState([]);
+
+  // Categorias
+  const incomeTags = ["Uber", "99", "Indriver", "Particular", "Gorjeta"];
+  const expenseTags = [
+    "Gasolina",
+    "Etanol",
+    "GNV",
+    "Alimentação",
+    "Lava-jato",
+    "Manutenção",
+  ];
 
   // --- CONFIG DO GRÁFICO ---
   const chartOptions = {
@@ -92,11 +120,9 @@ export function DriverDashboard() {
     noData: { text: "Sem dados...", style: { color: "#9CA3AF" } },
   };
 
-  // 1. Carrega Turno e Histórico
   useEffect(() => {
     if (!user) return;
 
-    // A. Monitora Turno Aberto (Realtime para refletir totais na hora)
     const qOpen = query(
       collection(db, "work_shifts"),
       where("userId", "==", user.uid),
@@ -114,14 +140,13 @@ export function DriverDashboard() {
       setLoading(false);
     });
 
-    // B. Carrega Histórico (Uma vez)
     async function loadHistory() {
       const qHistory = query(
         collection(db, "work_shifts"),
         where("userId", "==", user.uid),
         where("status", "==", "closed"),
         orderBy("date", "desc"),
-        limit(10),
+        limit(5),
       );
       const snapshot = await getDocs(qHistory);
       setShiftHistory(
@@ -133,29 +158,24 @@ export function DriverDashboard() {
     return () => unsubscribeShift();
   }, [user]);
 
-  // 2. NOVO: Monitora as Transações do Turno Atual (Para listar e editar)
   useEffect(() => {
     if (!currentShift?.id) {
       setTodayTransactions([]);
       return;
     }
-
     const qTrans = query(
       collection(db, "transactions"),
       where("shiftId", "==", currentShift.id),
       orderBy("date", "desc"),
     );
-
     const unsubscribeTrans = onSnapshot(qTrans, (snapshot) => {
       setTodayTransactions(
         snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() })),
       );
     });
-
     return () => unsubscribeTrans();
   }, [currentShift?.id]);
 
-  // 3. Carrega Gráfico
   useEffect(() => {
     if (!user) return;
     async function loadChartData() {
@@ -196,6 +216,164 @@ export function DriverDashboard() {
     loadChartData();
   }, [user, chartFilter, currentShift]);
 
+  // --- RELATÓRIOS (CORRIGIDO) ---
+
+  async function handleGenerateReport() {
+    if (!reportStartDate || !reportEndDate)
+      return alert("Selecione as datas de início e fim.");
+
+    setLoadingReport(true);
+    setReportData([]);
+
+    // CORREÇÃO DE FUSO HORÁRIO: Forçamos o início e o fim do dia
+    // Adicionamos o horário explicitamente na string para garantir o dia local
+    const start = new Date(reportStartDate + "T00:00:00");
+    const end = new Date(reportEndDate + "T23:59:59.999");
+
+    try {
+      // IMPORTANTE: Se aparecer um link vermelho no console, CLIQUE NELE para criar o índice
+      const q = query(
+        collection(db, "work_shifts"),
+        where("userId", "==", user.uid),
+        where("status", "==", "closed"),
+        where("date", ">=", start.toISOString()),
+        where("date", "<=", end.toISOString()),
+        orderBy("date", "desc"),
+      );
+
+      const snapshot = await getDocs(q);
+      const shifts = snapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+
+      console.log("Turnos encontrados:", shifts.length); // Debug no console
+
+      let totalEarn = 0;
+      let totalExp = 0;
+      let totalKm = 0;
+
+      shifts.forEach((s) => {
+        totalEarn += s.totalEarnings || 0;
+        totalExp += s.totalExpenses || 0;
+        totalKm += s.totalKm || 0;
+      });
+
+      setReportData(shifts);
+      setReportTotals({
+        earnings: totalEarn,
+        expenses: totalExp,
+        profit: totalEarn - totalExp,
+        km: totalKm,
+      });
+    } catch (error) {
+      console.error("Erro ao gerar relatório:", error);
+      if (error.code === "failed-precondition") {
+        alert(
+          "Configuração de banco de dados necessária. Abra o Console (F12) e clique no link do Firebase para criar o índice.",
+        );
+      } else {
+        alert("Erro ao buscar dados. Verifique sua conexão.");
+      }
+    } finally {
+      setLoadingReport(false);
+    }
+  }
+
+  function exportToCSV() {
+    if (reportData.length === 0) return alert("Gere um relatório primeiro.");
+    let csvContent = "data:text/csv;charset=utf-8,";
+    csvContent += "Data;Ganhos (R$);Despesas (R$);Lucro (R$);KM Rodado\n";
+    reportData.forEach((item) => {
+      const date = new Date(item.date).toLocaleDateString("pt-BR");
+      const profit = (item.totalEarnings - item.totalExpenses)
+        .toFixed(2)
+        .replace(".", ",");
+      const earn = item.totalEarnings.toFixed(2).replace(".", ",");
+      const exp = item.totalExpenses.toFixed(2).replace(".", ",");
+      csvContent += `${date};${earn};${exp};${profit};${item.totalKm}\n`;
+    });
+    csvContent += `\nTOTAL;${reportTotals.earnings.toFixed(2).replace(".", ",")};${reportTotals.expenses.toFixed(2).replace(".", ",")};${reportTotals.profit.toFixed(2).replace(".", ",")};${reportTotals.km}`;
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `relatorio_${reportStartDate}.csv`);
+    document.body.appendChild(link);
+    link.click();
+  }
+
+  function exportToPDF() {
+    if (reportData.length === 0) return alert("Gere um relatório primeiro.");
+
+    const doc = new jsPDF();
+
+    // Título
+    doc.setFontSize(18);
+    doc.text("Relatório Financeiro - Lucro Certo", 14, 22);
+
+    // Período
+    doc.setFontSize(11);
+    doc.text(
+      `Período: ${new Date(reportStartDate).toLocaleDateString("pt-BR")} a ${new Date(reportEndDate).toLocaleDateString("pt-BR")}`,
+      14,
+      30,
+    );
+    doc.text(`Motorista: ${userData?.name || "Motorista"}`, 14, 36);
+
+    // Resumo
+    doc.setFontSize(12);
+    doc.text("Resumo do Período:", 14, 48);
+    doc.setFontSize(10);
+    doc.setTextColor(0, 128, 0); // Verde
+    doc.text(
+      `Ganhos Totais: R$ ${reportTotals.earnings.toFixed(2).replace(".", ",")}`,
+      14,
+      55,
+    );
+    doc.setTextColor(200, 0, 0); // Vermelho
+    doc.text(
+      `Despesas Totais: R$ ${reportTotals.expenses.toFixed(2).replace(".", ",")}`,
+      14,
+      61,
+    );
+    doc.setTextColor(0, 0, 0); // Preto
+    doc.setFont(undefined, "bold");
+    doc.text(
+      `Lucro Líquido: R$ ${reportTotals.profit.toFixed(2).replace(".", ",")}`,
+      14,
+      69,
+    );
+    doc.setFont(undefined, "normal");
+    doc.text(`KM Total: ${reportTotals.km} km`, 14, 75);
+
+    // Tabela
+    const tableColumn = ["Data", "Ganhos", "Despesas", "Lucro", "KM"];
+    const tableRows = [];
+
+    reportData.forEach((item) => {
+      const date = new Date(item.date).toLocaleDateString("pt-BR");
+      const profit = item.totalEarnings - item.totalExpenses;
+      const rowData = [
+        date,
+        `R$ ${item.totalEarnings.toFixed(2).replace(".", ",")}`,
+        `R$ ${item.totalExpenses.toFixed(2).replace(".", ",")}`,
+        `R$ ${profit.toFixed(2).replace(".", ",")}`,
+        item.totalKm,
+      ];
+      tableRows.push(rowData);
+    });
+
+    autoTable(doc, {
+      startY: 85,
+      head: [tableColumn],
+      body: tableRows,
+      theme: "grid",
+      headStyles: { fillColor: [22, 163, 74] },
+    });
+
+    doc.save(`relatorio_lucro_certo_${reportStartDate}.pdf`);
+  }
+
   // --- AÇÕES ---
 
   async function handleLogout() {
@@ -218,52 +396,38 @@ export function DriverDashboard() {
         totalExpenses: 0,
         createdAt: new Date(),
       };
-
       const docRef = await addDoc(collection(db, "work_shifts"), newShift);
       await updateDoc(doc(db, "users", user.uid), { isWorking: true });
-      // O onSnapshot vai atualizar o state currentShift sozinho
     } catch (error) {
       console.error(error);
-      alert("Erro ao iniciar.");
     } finally {
       setIsStarting(false);
     }
   }
 
-  // Lógica Inteligente: Salvar ou Editar
   async function handleSaveTransaction(e) {
     e.preventDefault();
     setIsSaving(true);
     try {
       const val = Number(amount);
       if (!val || val <= 0) return;
-
       const shiftRef = doc(db, "work_shifts", currentShift.id);
       const fieldToUpdate =
         transactionType === "income" ? "totalEarnings" : "totalExpenses";
 
       if (editingTransaction) {
-        // --- MODO EDIÇÃO ---
         const oldVal = editingTransaction.amount;
         const diff = val - oldVal;
-
-        // 1. Atualiza a transação
         const transRef = doc(db, "transactions", editingTransaction.id);
         await updateDoc(transRef, {
           amount: val,
           description: description,
-          type: transactionType, // Caso tenha mudado (raro, mas possível)
+          type: transactionType,
         });
-
-        // 2. Atualiza o Total do Turno (apenas a diferença)
-        // Nota: Se mudou o TIPO (ganho->gasto), a lógica seria mais complexa.
-        // Aqui assumimos que ele mantém o tipo ou deleta e cria de novo.
-        // Para simplificar, vou permitir editar valor/descrição. Se mudar tipo, melhor deletar.
         if (transactionType === editingTransaction.type) {
           await updateDoc(shiftRef, { [fieldToUpdate]: increment(diff) });
         }
       } else {
-        // --- MODO CRIAÇÃO ---
         await addDoc(collection(db, "transactions"), {
           userId: user.uid,
           shiftId: currentShift.id,
@@ -274,63 +438,25 @@ export function DriverDashboard() {
         });
         await updateDoc(shiftRef, { [fieldToUpdate]: increment(val) });
       }
-
       closeTransactionModal();
     } catch (error) {
-      console.error("Erro ao salvar:", error);
-      alert("Erro ao processar.");
+      console.error(error);
     } finally {
       setIsSaving(false);
     }
   }
 
-  // NOVO: Excluir Transação
   async function handleDeleteTransaction(item) {
-    if (
-      !confirm(
-        `Tem certeza que deseja apagar "${item.description}"? O valor será estornado.`,
-      )
-    )
-      return;
-
+    if (!confirm(`Tem certeza que deseja apagar?`)) return;
     try {
-      // 1. Remove do banco
       await deleteDoc(doc(db, "transactions", item.id));
-
-      // 2. Atualiza o Total do Turno (Subtrai o valor)
       const shiftRef = doc(db, "work_shifts", currentShift.id);
       const fieldToUpdate =
         item.type === "income" ? "totalEarnings" : "totalExpenses";
-
-      // Usa increment com valor negativo para subtrair
       await updateDoc(shiftRef, { [fieldToUpdate]: increment(-item.amount) });
     } catch (error) {
       console.error("Erro ao excluir:", error);
-      alert("Erro ao excluir.");
     }
-  }
-
-  // Abrir Modal para Criação
-  function openNewTransactionModal(type) {
-    setEditingTransaction(null); // Limpa edição
-    setTransactionType(type);
-    setAmount("");
-    setDescription("");
-    setIsTransactionModalOpen(true);
-  }
-
-  // Abrir Modal para Edição
-  function openEditTransactionModal(item) {
-    setEditingTransaction(item); // Seta objeto de edição
-    setTransactionType(item.type);
-    setAmount(item.amount);
-    setDescription(item.description);
-    setIsTransactionModalOpen(true);
-  }
-
-  function closeTransactionModal() {
-    setIsTransactionModalOpen(false);
-    setEditingTransaction(null);
   }
 
   async function handleEndShift(e) {
@@ -339,28 +465,22 @@ export function DriverDashboard() {
     try {
       const finalKm = Number(endKm);
       const start = currentShift.odometerStart;
-
       if (finalKm < start) {
         alert(`O KM Final deve ser maior que o Inicial (${start})!`);
         setIsEnding(false);
         return;
       }
-
       const totalKmRodado = finalKm - start;
       const shiftRef = doc(db, "work_shifts", currentShift.id);
-
       const closedData = {
         status: "closed",
         odometerEnd: finalKm,
         totalKm: totalKmRodado,
         closedAt: new Date().toISOString(),
       };
-
       await updateDoc(shiftRef, closedData);
       await updateDoc(doc(db, "users", user.uid), { isWorking: false });
-
       setShiftHistory((prev) => [{ ...currentShift, ...closedData }, ...prev]);
-      // currentShift vai virar null via onSnapshot
       setEndKm("");
       setIsEndShiftModalOpen(false);
     } catch (error) {
@@ -368,6 +488,25 @@ export function DriverDashboard() {
     } finally {
       setIsEnding(false);
     }
+  }
+
+  function openNewTransactionModal(type) {
+    setEditingTransaction(null);
+    setTransactionType(type);
+    setAmount("");
+    setDescription("");
+    setIsTransactionModalOpen(true);
+  }
+  function openEditTransactionModal(item) {
+    setEditingTransaction(item);
+    setTransactionType(item.type);
+    setAmount(item.amount);
+    setDescription(item.description);
+    setIsTransactionModalOpen(true);
+  }
+  function closeTransactionModal() {
+    setIsTransactionModalOpen(false);
+    setEditingTransaction(null);
   }
 
   if (loading)
@@ -511,7 +650,6 @@ export function DriverDashboard() {
               </button>
             </div>
 
-            {/* NOVO: LISTA DE MOVIMENTAÇÕES DO DIA (Para Editar/Excluir) */}
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 overflow-hidden mt-4">
               <div className="p-4 bg-gray-50 dark:bg-gray-700/50 border-b border-gray-100 dark:border-gray-700 flex items-center gap-2">
                 <ListDashes
@@ -522,7 +660,6 @@ export function DriverDashboard() {
                   Movimentações de Hoje
                 </h3>
               </div>
-
               <div className="divide-y divide-gray-100 dark:divide-gray-700 max-h-60 overflow-y-auto">
                 {todayTransactions.length === 0 ? (
                   <p className="p-4 text-xs text-center text-gray-400">
@@ -556,15 +693,12 @@ export function DriverDashboard() {
                           </p>
                         </div>
                       </div>
-
                       <div className="flex items-center gap-3">
                         <span
                           className={`text-sm font-bold ${item.type === "income" ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}
                         >
                           R$ {item.amount.toFixed(2)}
                         </span>
-
-                        {/* Botões de Ação */}
                         <div className="flex gap-1">
                           <button
                             onClick={() => openEditTransactionModal(item)}
@@ -596,8 +730,19 @@ export function DriverDashboard() {
           </div>
         )}
 
-        {/* GRÁFICOS E HISTÓRICO GERAL */}
         <div className="space-y-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex justify-between items-center">
+            <h3 className="font-bold text-lg text-gray-900 dark:text-white">
+              Resumo e Histórico
+            </h3>
+            <button
+              onClick={() => setIsReportModalOpen(true)}
+              className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-md transition-transform active:scale-95"
+            >
+              <FileText size={18} weight="bold" /> Relatório Completo
+            </button>
+          </div>
+
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 p-4">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-bold text-gray-700 dark:text-white flex items-center gap-2">
@@ -632,13 +777,12 @@ export function DriverDashboard() {
                 className="text-green-600 dark:text-green-400"
               />
               <h3 className="font-bold text-gray-700 dark:text-white">
-                Histórico de Turnos
+                Últimos Turnos
               </h3>
             </div>
-
             {shiftHistory.length === 0 ? (
               <div className="p-8 text-center text-gray-400 text-sm">
-                Nenhum turno finalizado ainda.
+                Nenhum turno finalizado.
               </div>
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -701,7 +845,6 @@ export function DriverDashboard() {
                 className={`px-6 py-4 flex justify-between items-center ${transactionType === "income" ? "bg-green-600" : "bg-red-600"}`}
               >
                 <h3 className="text-white font-bold text-lg flex items-center gap-2">
-                  {/* Título Dinâmico: Criar ou Editar */}
                   {editingTransaction
                     ? "Editar Lançamento"
                     : transactionType === "income"
@@ -735,6 +878,23 @@ export function DriverDashboard() {
                     onChange={(e) => setAmount(e.target.value)}
                   />
                 </div>
+
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {(transactionType === "income"
+                    ? incomeTags
+                    : expenseTags
+                  ).map((tag) => (
+                    <button
+                      key={tag}
+                      type="button"
+                      onClick={() => setDescription(tag)}
+                      className={`px-3 py-1 text-xs font-bold rounded-full transition-colors border ${description === tag ? (transactionType === "income" ? "bg-green-100 text-green-700 border-green-200 dark:bg-green-900 dark:text-green-300 dark:border-green-800" : "bg-red-100 text-red-700 border-red-200 dark:bg-red-900 dark:text-red-300 dark:border-red-800") : "bg-gray-50 text-gray-500 border-gray-200 dark:bg-gray-700 dark:text-gray-400 dark:border-gray-600 hover:bg-gray-100 dark:hover:bg-gray-600"}`}
+                    >
+                      {tag}
+                    </button>
+                  ))}
+                </div>
+
                 <div>
                   <label className="block text-xs font-bold uppercase text-gray-500 dark:text-gray-400 mb-1">
                     Descrição
@@ -817,6 +977,177 @@ export function DriverDashboard() {
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* --- MODAL DE RELATÓRIO AVANÇADO --- */}
+        {isReportModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
+            <div className="bg-white dark:bg-gray-800 w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[90vh]">
+              <div className="px-6 py-4 border-b border-gray-100 dark:border-gray-700 flex justify-between items-center">
+                <h3 className="font-bold text-lg text-gray-900 dark:text-white flex items-center gap-2">
+                  <FileText size={24} className="text-blue-600" /> Relatório
+                  Financeiro
+                </h3>
+                <button
+                  onClick={() => setIsReportModalOpen(false)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-white"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="p-6 overflow-y-auto">
+                <div className="bg-gray-50 dark:bg-gray-700/50 p-4 rounded-xl mb-6">
+                  <p className="text-xs font-bold uppercase text-gray-500 dark:text-gray-400 mb-3">
+                    Período de Análise
+                  </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="text-xs text-gray-500 dark:text-gray-400">
+                        Início
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full mt-1 p-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                        value={reportStartDate}
+                        onChange={(e) => setReportStartDate(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500 dark:text-gray-400">
+                        Fim
+                      </label>
+                      <input
+                        type="date"
+                        className="w-full mt-1 p-2 rounded-lg border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                        value={reportEndDate}
+                        onChange={(e) => setReportEndDate(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={handleGenerateReport}
+                    disabled={loadingReport}
+                    className="w-full mt-4 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-bold text-sm flex items-center justify-center gap-2"
+                  >
+                    {loadingReport ? (
+                      "Buscando..."
+                    ) : (
+                      <>
+                        <MagnifyingGlass weight="bold" /> Gerar Relatório
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* DADOS NA TELA (Sempre visíveis se houver dados) */}
+                {reportData.length > 0 && (
+                  <div className="space-y-6">
+                    {/* Card de Totais (Unificado) */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="bg-green-50 dark:bg-green-900/20 p-3 rounded-xl border border-green-100 dark:border-green-900/50">
+                        <p className="text-xs text-green-700 dark:text-green-400 font-bold uppercase">
+                          Total Ganhos
+                        </p>
+                        <p className="text-xl font-bold text-green-700 dark:text-green-400">
+                          R$ {reportTotals.earnings.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-xl border border-red-100 dark:border-red-900/50">
+                        <p className="text-xs text-red-700 dark:text-red-400 font-bold uppercase">
+                          Total Custos
+                        </p>
+                        <p className="text-xl font-bold text-red-700 dark:text-red-400">
+                          R$ {reportTotals.expenses.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-gray-900 dark:bg-gray-700 text-white p-4 rounded-xl flex justify-between items-center">
+                      <div>
+                        <p className="text-xs text-gray-400 font-bold uppercase">
+                          Lucro do Período
+                        </p>
+                        <p className="text-2xl font-bold">
+                          R$ {reportTotals.profit.toFixed(2)}
+                        </p>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-xs text-gray-400 font-bold uppercase">
+                          KM Total
+                        </p>
+                        <p className="text-xl font-bold">
+                          {reportTotals.km} km
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Lista Detalhada */}
+                    <div>
+                      <h4 className="font-bold text-sm text-gray-700 dark:text-white mb-2">
+                        Detalhamento por Dia
+                      </h4>
+                      <div className="border border-gray-100 dark:border-gray-700 rounded-xl overflow-hidden max-h-48 overflow-y-auto">
+                        <table className="w-full text-sm text-left">
+                          <thead className="bg-gray-50 dark:bg-gray-700 text-gray-500 dark:text-gray-300 sticky top-0">
+                            <tr>
+                              <th className="px-4 py-2">Data</th>
+                              <th className="px-4 py-2 text-right">Lucro</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                            {reportData.map((item) => (
+                              <tr key={item.id} className="dark:text-gray-300">
+                                <td className="px-4 py-2">
+                                  {new Date(item.date).toLocaleDateString(
+                                    "pt-BR",
+                                  )}
+                                </td>
+                                <td
+                                  className={`px-4 py-2 text-right font-bold ${item.totalEarnings - item.totalExpenses >= 0 ? "text-green-600" : "text-red-500"}`}
+                                >
+                                  R${" "}
+                                  {(
+                                    item.totalEarnings - item.totalExpenses
+                                  ).toFixed(2)}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+
+                    {/* BOTÕES DE EXPORTAÇÃO */}
+                    <div className="grid grid-cols-2 gap-3">
+                      <button
+                        onClick={exportToCSV}
+                        className="w-full bg-green-600 hover:bg-green-700 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center gap-1 text-xs"
+                      >
+                        <DownloadSimple size={20} weight="bold" /> Baixar Excel
+                        (CSV)
+                      </button>
+                      <button
+                        onClick={exportToPDF}
+                        className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl font-bold flex flex-col items-center justify-center gap-1 text-xs"
+                      >
+                        <FilePdf size={20} weight="bold" /> Baixar PDF
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {reportData.length === 0 &&
+                  reportStartDate &&
+                  reportEndDate &&
+                  !loadingReport && (
+                    <p className="text-center text-gray-400 text-sm mt-4">
+                      Nenhum dado encontrado para este período.
+                    </p>
+                  )}
+              </div>
             </div>
           </div>
         )}
