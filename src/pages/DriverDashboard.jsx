@@ -85,13 +85,21 @@ export function DriverDashboard() {
   const [todayTransactions, setTodayTransactions] = useState([]);
 
   // Categorias
-  const incomeTags = ["Uber", "99", "Indriver", "Particular", "Gorjeta"];
+  const incomeTags = [
+    "Uber",
+    "99",
+    "Indriver",
+    "BlaBlaCar",
+    "Particular",
+    "Gorjeta",
+  ];
   const expenseTags = [
     "Gasolina",
     "Etanol",
     "GNV",
     "Alimentação",
-    "Lava-jato",
+    "Lavagem",
+    "Higienização Interna",
     "Manutenção",
   ];
 
