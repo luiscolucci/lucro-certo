@@ -2,28 +2,41 @@ import { useState } from "react";
 import { useAuth } from "../contexts/AuthContext";
 import { useTheme } from "../contexts/ThemeContext";
 import { useNavigate, Link } from "react-router-dom";
-import { Car, Sun, Moon, LockKey, X, PaperPlaneRight } from "phosphor-react"; // Ícones novos
+import {
+  Car,
+  Sun,
+  Moon,
+  LockKey,
+  X,
+  PaperPlaneRight,
+  Eye,
+  EyeSlash,
+} from "phosphor-react"; // Adicionei Eye e EyeSlash
 import { doc, getDoc } from "firebase/firestore";
-import { sendPasswordResetEmail, signOut } from "firebase/auth"; // Importamos a função de reset
+import { sendPasswordResetEmail, signOut } from "firebase/auth";
 import { db, auth } from "../firebase";
 
 export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
+  // Novo estado para controlar a visibilidade da senha
+  const [showPassword, setShowPassword] = useState(false);
+
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   // Estados do "Esqueci a Senha"
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
   const [forgotEmail, setForgotEmail] = useState("");
-  const [forgotMsg, setForgotMsg] = useState(null); // { type: 'success' | 'error', text: '' }
+  const [forgotMsg, setForgotMsg] = useState(null);
   const [sendingLink, setSendingLink] = useState(false);
 
   const { signIn } = useAuth();
   const { theme, toggleTheme } = useTheme();
   const navigate = useNavigate();
 
-  // --- Lógica de Login (Mantida) ---
+  // --- Lógica de Login ---
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
@@ -70,7 +83,7 @@ export function Login() {
     }
   }
 
-  // --- Lógica de Reset de Senha (Nova) ---
+  // --- Lógica de Reset de Senha ---
   async function handleForgotPassword(e) {
     e.preventDefault();
     if (!forgotEmail) return;
@@ -84,7 +97,7 @@ export function Login() {
         type: "success",
         text: "Email enviado! Verifique sua caixa de entrada (e spam) para redefinir a senha.",
       });
-      setForgotEmail(""); // Limpa o campo
+      setForgotEmail("");
     } catch (error) {
       console.error(error);
       if (error.code === "auth/user-not-found") {
@@ -153,7 +166,6 @@ export function Login() {
                 Senha
               </label>
 
-              {/* LINK "ESQUECI MINHA SENHA" */}
               <button
                 type="button"
                 onClick={() => setIsForgotModalOpen(true)}
@@ -162,13 +174,25 @@ export function Login() {
                 Esqueci minha senha
               </button>
             </div>
-            <input
-              type="password"
-              required
-              className="mt-1 block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-green-500 focus:border-green-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
+
+            {/* INPUT DE SENHA COM OLHO MÁGICO */}
+            <div className="relative">
+              <input
+                type={showPassword ? "text" : "password"} // Alterna o tipo
+                required
+                className="mt-1 block w-full px-3 py-2 pr-10 border border-gray-300 dark:border-gray-600 rounded-md focus:ring-green-500 focus:border-green-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                tabIndex="-1" // Pula o tab para não atrapalhar a navegação rápida
+              >
+                {showPassword ? <EyeSlash size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
           </div>
 
           <div className="space-y-3">
@@ -194,7 +218,6 @@ export function Login() {
       {isForgotModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-fade-in">
           <div className="bg-white dark:bg-gray-800 w-full max-w-sm rounded-2xl shadow-2xl p-6 relative animate-slide-up">
-            {/* Botão Fechar */}
             <button
               onClick={() => setIsForgotModalOpen(false)}
               className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors"
