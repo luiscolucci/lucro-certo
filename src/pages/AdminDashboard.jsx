@@ -227,7 +227,7 @@ export function AdminDashboard() {
               />
             </div>
             <span className="text-xl font-bold text-gray-800 dark:text-white tracking-tight">
-              Lucro Certo
+              Lucro Real
             </span>
           </div>
 

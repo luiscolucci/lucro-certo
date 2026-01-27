@@ -317,7 +317,7 @@ export function DriverDashboard() {
 
     // Título
     doc.setFontSize(18);
-    doc.text("Relatório Financeiro - Lucro Certo", 14, 22);
+    doc.text("Relatório Financeiro - Lucro Real", 14, 22);
 
     // Período
     doc.setFontSize(11);
