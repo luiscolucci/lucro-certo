@@ -216,7 +216,7 @@ export function DriverDashboard() {
                 month: "2-digit",
               });
         cats.push(label);
-        data.push(d.totalEarnings - d.totalExpenses);
+        data.push((d.totalEarnings || 0) - (d.totalExpenses || 0));
       });
       setChartCategories(cats);
       setChartData(data);
@@ -239,7 +239,6 @@ export function DriverDashboard() {
     const end = new Date(reportEndDate + "T23:59:59.999");
 
     try {
-      // IMPORTANTE: Se aparecer um link vermelho no console, CLIQUE NELE para criar o índice
       const q = query(
         collection(db, "work_shifts"),
         where("userId", "==", user.uid),
@@ -254,8 +253,6 @@ export function DriverDashboard() {
         id: doc.id,
         ...doc.data(),
       }));
-
-      console.log("Turnos encontrados:", shifts.length); // Debug no console
 
       let totalEarn = 0;
       let totalExp = 0;
@@ -294,14 +291,14 @@ export function DriverDashboard() {
     csvContent += "Data;Ganhos (R$);Despesas (R$);Lucro (R$);KM Rodado\n";
     reportData.forEach((item) => {
       const date = new Date(item.date).toLocaleDateString("pt-BR");
-      const profit = (item.totalEarnings - item.totalExpenses)
+      const profit = ((item.totalEarnings || 0) - (item.totalExpenses || 0))
         .toFixed(2)
         .replace(".", ",");
-      const earn = item.totalEarnings.toFixed(2).replace(".", ",");
-      const exp = item.totalExpenses.toFixed(2).replace(".", ",");
+      const earn = (item.totalEarnings || 0).toFixed(2).replace(".", ",");
+      const exp = (item.totalExpenses || 0).toFixed(2).replace(".", ",");
       csvContent += `${date};${earn};${exp};${profit};${item.totalKm}\n`;
     });
-    csvContent += `\nTOTAL;${reportTotals.earnings.toFixed(2).replace(".", ",")};${reportTotals.expenses.toFixed(2).replace(".", ",")};${reportTotals.profit.toFixed(2).replace(".", ",")};${reportTotals.km}`;
+    csvContent += `\nTOTAL;${(reportTotals.earnings || 0).toFixed(2).replace(".", ",")};${(reportTotals.expenses || 0).toFixed(2).replace(".", ",")};${(reportTotals.profit || 0).toFixed(2).replace(".", ",")};${reportTotals.km}`;
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -334,20 +331,20 @@ export function DriverDashboard() {
     doc.setFontSize(10);
     doc.setTextColor(0, 128, 0); // Verde
     doc.text(
-      `Ganhos Totais: R$ ${reportTotals.earnings.toFixed(2).replace(".", ",")}`,
+      `Ganhos Totais: R$ ${(reportTotals.earnings || 0).toFixed(2).replace(".", ",")}`,
       14,
       55,
     );
     doc.setTextColor(200, 0, 0); // Vermelho
     doc.text(
-      `Despesas Totais: R$ ${reportTotals.expenses.toFixed(2).replace(".", ",")}`,
+      `Despesas Totais: R$ ${(reportTotals.expenses || 0).toFixed(2).replace(".", ",")}`,
       14,
       61,
     );
     doc.setTextColor(0, 0, 0); // Preto
     doc.setFont(undefined, "bold");
     doc.text(
-      `Lucro Líquido: R$ ${reportTotals.profit.toFixed(2).replace(".", ",")}`,
+      `Lucro Líquido: R$ ${(reportTotals.profit || 0).toFixed(2).replace(".", ",")}`,
       14,
       69,
     );
@@ -360,12 +357,12 @@ export function DriverDashboard() {
 
     reportData.forEach((item) => {
       const date = new Date(item.date).toLocaleDateString("pt-BR");
-      const profit = item.totalEarnings - item.totalExpenses;
+      const profit = (item.totalEarnings || 0) - (item.totalExpenses || 0);
       const rowData = [
         date,
-        `R$ ${item.totalEarnings.toFixed(2).replace(".", ",")}`,
-        `R$ ${item.totalExpenses.toFixed(2).replace(".", ",")}`,
-        `R$ ${profit.toFixed(2).replace(".", ",")}`,
+        `R$ ${(item.totalEarnings || 0).toFixed(2).replace(".", ",")}`,
+        `R$ ${(item.totalExpenses || 0).toFixed(2).replace(".", ",")}`,
+        `R$ ${(profit || 0).toFixed(2).replace(".", ",")}`,
         item.totalKm,
       ];
       tableRows.push(rowData);
@@ -599,7 +596,10 @@ export function DriverDashboard() {
                   Ganhos
                 </span>
                 <div className="text-2xl font-bold text-green-600 dark:text-green-400 mt-1">
-                  R$ {currentShift.totalEarnings.toFixed(2).replace(".", ",")}
+                  R${" "}
+                  {(currentShift.totalEarnings || 0)
+                    .toFixed(2)
+                    .replace(".", ",")}
                 </div>
               </div>
               <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700">
@@ -607,7 +607,10 @@ export function DriverDashboard() {
                   Custos
                 </span>
                 <div className="text-2xl font-bold text-red-500 dark:text-red-400 mt-1">
-                  R$ {currentShift.totalExpenses.toFixed(2).replace(".", ",")}
+                  R${" "}
+                  {(currentShift.totalExpenses || 0)
+                    .toFixed(2)
+                    .replace(".", ",")}
                 </div>
               </div>
             </div>
@@ -619,7 +622,10 @@ export function DriverDashboard() {
                 </span>
                 <div className="text-4xl font-bold mt-1">
                   R${" "}
-                  {(currentShift.totalEarnings - currentShift.totalExpenses)
+                  {(
+                    (currentShift.totalEarnings || 0) -
+                    (currentShift.totalExpenses || 0)
+                  )
                     .toFixed(2)
                     .replace(".", ",")}
                 </div>
@@ -705,7 +711,7 @@ export function DriverDashboard() {
                         <span
                           className={`text-sm font-bold ${item.type === "income" ? "text-green-600 dark:text-green-400" : "text-red-500 dark:text-red-400"}`}
                         >
-                          R$ {item.amount.toFixed(2)}
+                          R$ {(item.amount || 0).toFixed(2)}
                         </span>
                         <div className="flex gap-1">
                           <button
@@ -795,7 +801,8 @@ export function DriverDashboard() {
             ) : (
               <div className="divide-y divide-gray-100 dark:divide-gray-700">
                 {shiftHistory.map((shift) => {
-                  const profit = shift.totalEarnings - shift.totalExpenses;
+                  const profit =
+                    (shift.totalEarnings || 0) - (shift.totalExpenses || 0);
                   const date = new Date(shift.date).toLocaleDateString("pt-BR");
                   return (
                     <div
@@ -816,7 +823,7 @@ export function DriverDashboard() {
                           <span
                             className={`font-bold text-lg ${profit >= 0 ? "text-green-600 dark:text-green-400" : "text-red-500"}`}
                           >
-                            R$ {profit.toFixed(2).replace(".", ",")}
+                            R$ {(profit || 0).toFixed(2).replace(".", ",")}
                           </span>
                           <p className="text-[10px] uppercase font-bold text-gray-400">
                             Lucro
@@ -827,12 +834,14 @@ export function DriverDashboard() {
                         <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
                           <TrendUp weight="bold" />{" "}
                           <span>
-                            Bruto: R$ {shift.totalEarnings.toFixed(2)}
+                            Bruto: R$ {(shift.totalEarnings || 0).toFixed(2)}
                           </span>
                         </div>
                         <div className="flex items-center gap-1 text-red-500 dark:text-red-400">
                           <TrendDown weight="bold" />{" "}
-                          <span>Desp: R$ {shift.totalExpenses.toFixed(2)}</span>
+                          <span>
+                            Desp: R$ {(shift.totalExpenses || 0).toFixed(2)}
+                          </span>
                         </div>
                         <div className="ml-auto text-gray-400">
                           {shift.totalKm} KM
@@ -1060,7 +1069,7 @@ export function DriverDashboard() {
                           Total Ganhos
                         </p>
                         <p className="text-xl font-bold text-green-700 dark:text-green-400">
-                          R$ {reportTotals.earnings.toFixed(2)}
+                          R$ {(reportTotals.earnings || 0).toFixed(2)}
                         </p>
                       </div>
                       <div className="bg-red-50 dark:bg-red-900/20 p-3 rounded-xl border border-red-100 dark:border-red-900/50">
@@ -1068,7 +1077,7 @@ export function DriverDashboard() {
                           Total Custos
                         </p>
                         <p className="text-xl font-bold text-red-700 dark:text-red-400">
-                          R$ {reportTotals.expenses.toFixed(2)}
+                          R$ {(reportTotals.expenses || 0).toFixed(2)}
                         </p>
                       </div>
                     </div>
@@ -1079,7 +1088,7 @@ export function DriverDashboard() {
                           Lucro do Período
                         </p>
                         <p className="text-2xl font-bold">
-                          R$ {reportTotals.profit.toFixed(2)}
+                          R$ {(reportTotals.profit || 0).toFixed(2)}
                         </p>
                       </div>
                       <div className="text-right">
@@ -1118,7 +1127,8 @@ export function DriverDashboard() {
                                 >
                                   R${" "}
                                   {(
-                                    item.totalEarnings - item.totalExpenses
+                                    (item.totalEarnings || 0) -
+                                    (item.totalExpenses || 0)
                                   ).toFixed(2)}
                                 </td>
                               </tr>
